@@ -1,5 +1,6 @@
 from typing import Dict, Any, Optional, Protocol
 from abc import ABC, abstractmethod
+import json
 from vector_store import VectorStore, SearchResults
 
 
@@ -112,6 +113,94 @@ class CourseSearchTool(Tool):
         self.last_sources = sources
         
         return "\n\n".join(formatted)
+
+class CourseOutlineSearchTool(Tool):
+    """Tool for retrieving course outlines including all lessons"""
+
+    def __init__(self, vector_store: VectorStore):
+        self.store = vector_store
+
+    def get_tool_definition(self) -> Dict[str, Any]:
+        """Return Anthropic tool definition for this tool"""
+        return {
+            "name": "get_course_outline",
+            "description": "Get complete course outline with all lessons, lesson numbers, titles, and links",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "course_title": {
+                        "type": "string",
+                        "description": "Exact course title to get outline for"
+                    }
+                },
+                "required": ["course_title"]
+            }
+        }
+
+    def execute(self, course_title: str) -> str:
+        """
+        Execute the course outline search tool.
+
+        Args:
+            course_title: Exact course title to get outline for
+
+        Returns:
+            Formatted course outline or error message
+        """
+
+        try:
+            # Get course metadata by title
+            results = self.store.course_catalog.get(ids=[course_title])
+
+            if not results or not results['metadatas']:
+                return f"No course found with title '{course_title}'"
+
+            metadata = results['metadatas'][0]
+
+            # Extract course information
+            title = metadata.get('title', course_title)
+            course_link = metadata.get('course_link')
+            instructor = metadata.get('instructor')
+            lessons_json = metadata.get('lessons_json')
+
+            # Parse lessons JSON
+            lessons = []
+            if lessons_json:
+                try:
+                    lessons = json.loads(lessons_json)
+                except json.JSONDecodeError:
+                    print(f"Error parsing lessons JSON for course '{course_title}'")
+                    return f"Error parsing course outline for '{course_title}'"
+
+            # Build response
+            outline = f"Course Title: {title}\n"
+
+            if course_link:
+                outline += f"Course Link: {course_link}\n"
+
+            if instructor:
+                outline += f"Instructor: {instructor}\n"
+
+            outline += f"\nTotal Lessons: {len(lessons)}\n"
+            outline += "=" * 50 + "\n"
+
+            # Add each lesson
+            for lesson in lessons:
+                lesson_number = lesson.get('lesson_number')
+                lesson_title = lesson.get('lesson_title', 'Untitled Lesson')
+                lesson_link = lesson.get('lesson_link')
+
+                outline += f"Lesson {lesson_number}: {lesson_title}\n"
+
+                if lesson_link:
+                    outline += f"  Link: {lesson_link}\n"
+                outline += "\n"
+
+            return outline.strip()
+
+        except Exception as e:
+            return f"Error retrieving course outline for '{course_title}': {str(e)}"
+
 
 class ToolManager:
     """Manages available tools for the AI"""
